@@ -1,11 +1,24 @@
 #
 # Makefile for some libs needed in the kernel.
 #
+subdir-ccflags-y += -Werror
 
 ifdef CONFIG_FUNCTION_TRACER
 ORIG_CFLAGS := $(KBUILD_CFLAGS)
 KBUILD_CFLAGS = $(subst $(CC_FLAGS_FTRACE),,$(ORIG_CFLAGS))
 endif
+
+# These files are disabled because they produce lots of non-interesting and/or
+# flaky coverage that is not a function of syscall inputs. For example,
+# rbtree can be global and individual rotations don't correlate with inputs.
+KCOV_INSTRUMENT_string.o := n
+KCOV_INSTRUMENT_rbtree.o := n
+KCOV_INSTRUMENT_list_debug.o := n
+KCOV_INSTRUMENT_debugobjects.o := n
+KCOV_INSTRUMENT_dynamic_debug.o := n
+# Kernel does not boot if we instrument this file as it uses custom calling
+# convention (see CONFIG_ARCH_HWEIGHT_CFLAGS).
+KCOV_INSTRUMENT_hweight.o := n
 
 lib-y := ctype.o string.o vsprintf.o cmdline.o \
 	 rbtree.o radix-tree.o dump_stack.o timerqueue.o\
@@ -163,6 +176,9 @@ obj-$(CONFIG_GENERIC_NET_UTILS) += net_utils.o
 obj-$(CONFIG_SG_SPLIT) += sg_split.o
 obj-$(CONFIG_STMP_DEVICE) += stmp_device.o
 
+obj-$(CONFIG_STACKDEPOT) += stackdepot.o
+KASAN_SANITIZE_stackdepot.o := n
+
 libfdt_files = fdt.o fdt_ro.o fdt_wip.o fdt_rw.o fdt_sw.o fdt_strerror.o \
 	       fdt_empty_tree.o
 $(foreach file, $(libfdt_files), \
@@ -206,3 +222,5 @@ quiet_cmd_build_OID_registry = GEN     $@
 clean-files	+= oid_registry_data.c
 
 obj-$(CONFIG_UCS2_STRING) += ucs2_string.o
+
+obj-$(CONFIG_LZ4K) += lz4k/

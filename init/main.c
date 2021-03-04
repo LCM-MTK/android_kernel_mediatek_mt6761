@@ -89,14 +89,15 @@
 #include <asm/sections.h>
 #include <asm/cacheflush.h>
 
+#ifdef CONFIG_MTK_RAM_CONSOLE
+#include <mt-plat/mtk_ram_console.h>
+#endif
+
 static int kernel_init(void *);
 
 extern void init_IRQ(void);
 extern void fork_init(void);
 extern void radix_tree_init(void);
-#ifndef CONFIG_DEBUG_RODATA
-static inline void mark_rodata_ro(void) { }
-#endif
 
 /*
  * Debug helper: via this flag we know that we are in 'early bootup code'
@@ -472,7 +473,7 @@ void __init __weak smp_setup_processor_id(void)
 }
 
 # if THREAD_SIZE >= PAGE_SIZE
-void __init __weak thread_info_cache_init(void)
+void __init __weak thread_stack_cache_init(void)
 {
 }
 #endif
@@ -650,7 +651,7 @@ asmlinkage __visible void __init start_kernel(void)
 	/* Should be run before the first non-init thread is created */
 	init_espfix_bsp();
 #endif
-	thread_info_cache_init();
+	thread_stack_cache_init();
 	cred_init();
 	fork_init();
 	proc_caches_init();
@@ -781,20 +782,34 @@ static int __init_or_module do_one_initcall_debug(initcall_t fn)
 	return ret;
 }
 
+#ifdef CONFIG_MTPROF
+#include "bootprof.h"
+#else
+#define TIME_LOG_START()
+#define TIME_LOG_END()
+#define bootprof_initcall(fn, ts)
+#endif
+
 int __init_or_module do_one_initcall(initcall_t fn)
 {
 	int count = preempt_count();
 	int ret;
 	char msgbuf[64];
+#ifdef CONFIG_MTPROF
+	unsigned long long ts = 0;
+#endif
 
 	if (initcall_blacklisted(fn))
 		return -EPERM;
-
+#ifdef CONFIG_MTK_RAM_CONSOLE
+	aee_rr_rec_last_init_func((unsigned long)fn);
+#endif
+	TIME_LOG_START();
 	if (initcall_debug)
 		ret = do_one_initcall_debug(fn);
 	else
 		ret = fn();
-
+	TIME_LOG_END();
 	msgbuf[0] = 0;
 
 	if (preempt_count() != count) {
@@ -806,6 +821,7 @@ int __init_or_module do_one_initcall(initcall_t fn)
 		local_irq_enable();
 	}
 	WARN(msgbuf[0], "initcall %pF returned with %s\n", fn, msgbuf);
+	bootprof_initcall(fn, ts);
 
 	return ret;
 }
@@ -867,6 +883,10 @@ static void __init do_initcalls(void)
 
 	for (level = 0; level < ARRAY_SIZE(initcall_levels) - 1; level++)
 		do_initcall_level(level);
+#ifdef CONFIG_MTK_RAM_CONSOLE
+	aee_rr_rec_last_init_func(~(unsigned long)(0));
+#endif
+
 }
 
 /*
@@ -931,6 +951,28 @@ static int try_to_run_init_process(const char *init_filename)
 
 static noinline void __init kernel_init_freeable(void);
 
+#ifdef CONFIG_DEBUG_RODATA
+static bool rodata_enabled = true;
+static int __init set_debug_rodata(char *str)
+{
+	return strtobool(str, &rodata_enabled);
+}
+__setup("rodata=", set_debug_rodata);
+
+static void mark_readonly(void)
+{
+	if (rodata_enabled)
+		mark_rodata_ro();
+	else
+		pr_info("Kernel memory protection disabled.\n");
+}
+#else
+static inline void mark_readonly(void)
+{
+	pr_warn("This architecture does not have kernel memory protection.\n");
+}
+#endif
+
 static int __ref kernel_init(void *unused)
 {
 	int ret;
@@ -939,11 +981,15 @@ static int __ref kernel_init(void *unused)
 	/* need to finish all async __init code before freeing the memory */
 	async_synchronize_full();
 	free_initmem();
-	mark_rodata_ro();
+	mark_readonly();
 	system_state = SYSTEM_RUNNING;
 	numa_default_policy();
 
 	flush_delayed_fput();
+
+#ifdef CONFIG_MTPROF
+	log_boot("Kernel_init_done");
+#endif
 
 	if (ramdisk_execute_command) {
 		ret = run_init_process(ramdisk_execute_command);

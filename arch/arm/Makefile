@@ -9,6 +9,7 @@
 # for more details.
 #
 # Copyright (C) 1995-2001 by Russell King
+subdir-ccflags-y += -Werror
 
 # Ensure linker flags are correct
 LDFLAGS		:=
@@ -296,6 +297,8 @@ libs-y				:= arch/arm/lib/ $(libs-y)
 # Default target when executing plain make
 ifeq ($(CONFIG_XIP_KERNEL),y)
 KBUILD_IMAGE := xipImage
+else ifeq ($(CONFIG_BUILD_ARM_APPENDED_DTB_IMAGE),y)
+KBUILD_IMAGE := zImage-dtb
 else
 KBUILD_IMAGE := zImage
 endif
@@ -306,6 +309,11 @@ KBUILD_DTBS := dtbs
 endif
 
 all:	$(KBUILD_IMAGE) $(KBUILD_DTBS)
+
+MTK_PLATFORM := $(CONFIG_MTK_PLATFORM:"%"=%)
+MTK_PROJECT := $(CONFIG_ARCH_MTK_PROJECT:"%"=%)
+export MTK_PLATFORM MTK_PROJECT MTK_TARGET_PROJECT
+-include $(srctree)/scripts/drvgen/drvgen.mk
 
 boot := arch/arm/boot
 
@@ -329,12 +337,12 @@ $(BOOT_TARGETS): vmlinux
 $(INSTALL_TARGETS):
 	$(Q)$(MAKE) $(build)=$(boot) MACHINE=$(MACHINE) $@
 
-%.dtb: | scripts
+%.dtb: | scripts $(DRVGEN_FILE_LIST)
 	$(Q)$(MAKE) $(build)=$(boot)/dts MACHINE=$(MACHINE) $(boot)/dts/$@
 
 PHONY += dtbs dtbs_install
 
-dtbs: prepare scripts
+dtbs: prepare scripts dtbo_check
 	$(Q)$(MAKE) $(build)=$(boot)/dts
 
 dtbs_install:
@@ -345,6 +353,9 @@ vdso_install:
 ifeq ($(CONFIG_VDSO),y)
 	$(Q)$(MAKE) $(build)=arch/arm/vdso $@
 endif
+
+zImage-dtb: vmlinux scripts dtbs $(DTB_OVERLAY_IMAGE_TAGERT)
+	$(Q)$(MAKE) $(build)=$(boot) MACHINE=$(MACHINE) $(boot)/$@
 
 # We use MRPROPER_FILES and CLEAN_FILES now
 archclean:

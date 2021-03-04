@@ -40,6 +40,10 @@
 #include <asm/param.h>
 #include <asm/page.h>
 
+#ifdef CONFIG_MTK_USE_RESERVED_EXT_MEM
+#include <linux/exm_driver.h>
+#endif
+
 #ifndef user_long_t
 #define user_long_t long
 #endif
@@ -491,6 +495,7 @@ static inline int arch_elf_pt_proc(struct elfhdr *ehdr,
  * arch_check_elf() - check an ELF executable
  * @ehdr:	The main ELF header
  * @has_interp:	True if the ELF has an interpreter, else false.
+ * @interp_ehdr: The interpreter's ELF header
  * @state:	Architecture-specific state preserved throughout the process
  *		of loading the ELF.
  *
@@ -502,6 +507,7 @@ static inline int arch_elf_pt_proc(struct elfhdr *ehdr,
  *         with that return code.
  */
 static inline int arch_check_elf(struct elfhdr *ehdr, bool has_interp,
+				 struct elfhdr *interp_ehdr,
 				 struct arch_elf_state *state)
 {
 	/* Dummy implementation, always proceed */
@@ -651,7 +657,7 @@ static unsigned long randomize_stack_top(unsigned long stack_top)
 
 	if ((current->flags & PF_RANDOMIZE) &&
 		!(current->personality & ADDR_NO_RANDOMIZE)) {
-		random_variable = (unsigned long) get_random_int();
+		random_variable = get_random_long();
 		random_variable &= STACK_RND_MASK;
 		random_variable <<= PAGE_SHIFT;
 	}
@@ -829,7 +835,9 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	 * still possible to return an error to the code that invoked
 	 * the exec syscall.
 	 */
-	retval = arch_check_elf(&loc->elf_ex, !!interpreter, &arch_state);
+	retval = arch_check_elf(&loc->elf_ex,
+				!!interpreter, &loc->interp_elf_ex,
+				&arch_state);
 	if (retval)
 		goto out_free_dentry;
 
@@ -1261,6 +1269,11 @@ static bool always_dump_vma(struct vm_area_struct *vma)
 	 */
 	if (arch_vma_name(vma))
 		return true;
+
+#ifdef CONFIG_MTK_USE_RESERVED_EXT_MEM
+	if (extmem_in_mspace(vma))
+		return true;
+#endif
 
 	return false;
 }
@@ -2246,7 +2259,7 @@ static int elf_core_dump(struct coredump_params *cprm)
 
 	dataoff = offset = roundup(offset, ELF_EXEC_PAGESIZE);
 
-	vma_filesz = kmalloc_array(segs - 1, sizeof(*vma_filesz), GFP_KERNEL);
+	vma_filesz = vmalloc((segs - 1) * sizeof(*vma_filesz));
 	if (!vma_filesz)
 		goto end_coredump;
 
@@ -2322,6 +2335,23 @@ static int elf_core_dump(struct coredump_params *cprm)
 
 		end = vma->vm_start + vma_filesz[i++];
 
+#ifdef CONFIG_MTK_USE_RESERVED_EXT_MEM
+		if (extmem_in_mspace(vma)) {
+			void *extmem_va = (void *)get_virt_from_mspace(vma->vm_pgoff << PAGE_SHIFT);
+
+			for (addr = vma->vm_start; addr < end; addr += PAGE_SIZE, extmem_va += PAGE_SIZE) {
+				int stop = !dump_emit(cprm, extmem_va, PAGE_SIZE);
+
+				if (stop) {
+					pr_err("[EXT_MEM]stop addr:0x%lx, extmem_va:0x%p, vm_start:0x%lx, vm_end:0x%lx\n",
+						addr, extmem_va, vma->vm_start, end);
+					goto end_coredump;
+				}
+			}
+			continue;
+		}
+#endif
+
 		for (addr = vma->vm_start; addr < end; addr += PAGE_SIZE) {
 			struct page *page;
 			int stop;
@@ -2334,8 +2364,11 @@ static int elf_core_dump(struct coredump_params *cprm)
 				page_cache_release(page);
 			} else
 				stop = !dump_skip(cprm, PAGE_SIZE);
-			if (stop)
+			if (stop) {
+				pr_err("%s: stop addr:0x%lx, vm_start:0x%lx, vm_end:0x%lx, dump_size:0x%lx\n",
+						__func__, addr, vma->vm_start, vma->vm_end, end - vma->vm_start);
 				goto end_coredump;
+			}
 		}
 	}
 	dump_truncate(cprm);
@@ -2354,7 +2387,7 @@ end_coredump:
 cleanup:
 	free_note_info(&info);
 	kfree(shdr4extnum);
-	kfree(vma_filesz);
+	vfree(vma_filesz);
 	kfree(phdr4note);
 	kfree(elf);
 out:

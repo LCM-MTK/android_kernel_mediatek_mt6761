@@ -18,6 +18,7 @@
 #include <linux/atomic.h>
 #include <asm/ptrace.h>
 #include <asm/irq.h>
+#include <asm/sections.h>
 
 /*
  * These correspond to the IORESOURCE_IRQ_* defines in
@@ -193,6 +194,7 @@ extern void disable_irq_nosync(unsigned int irq);
 extern bool disable_hardirq(unsigned int irq);
 extern void disable_irq(unsigned int irq);
 extern void disable_percpu_irq(unsigned int irq);
+extern void _disable_percpu_irq(unsigned int irq, unsigned int cpu);
 extern void enable_irq(unsigned int irq);
 extern void enable_percpu_irq(unsigned int irq, unsigned int type);
 extern void irq_wake_thread(unsigned int irq, void *dev_id);
@@ -671,5 +673,12 @@ int arch_show_interrupts(struct seq_file *p, int prec);
 extern int early_irq_init(void);
 extern int arch_probe_nr_irqs(void);
 extern int arch_early_irq_init(void);
+
+/*
+ * We want to know which function is an entrypoint of a hardirq or a softirq.
+ */
+#define __irq_entry		 __attribute__((__section__(".irqentry.text")))
+#define __softirq_entry  \
+	__attribute__((__section__(".softirqentry.text")))
 
 #endif

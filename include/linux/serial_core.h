@@ -66,6 +66,7 @@ struct uart_ops {
 	void		(*set_ldisc)(struct uart_port *, struct ktermios *);
 	void		(*pm)(struct uart_port *, unsigned int state,
 			      unsigned int oldstate);
+	void		(*wake_peer)(struct uart_port *);
 
 	/*
 	 * Return a string describing the type of the port
@@ -280,6 +281,8 @@ struct uart_state {
 	enum uart_pm_state	pm_state;
 	struct circ_buf		xmit;
 
+	atomic_t		refcount;
+	wait_queue_head_t	remove_wait;
 	struct uart_port	*uart_port;
 };
 
